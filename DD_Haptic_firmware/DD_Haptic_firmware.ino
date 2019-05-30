@@ -44,7 +44,7 @@ long velTime = 10;
 long lastVelUpdate = 0;
 long currVelUpdate = 0;
 
-float Kd_vel = 0.0; //0.5;
+float Kd_vel = 0;
 
 /*force filter*/
 int thisForce = 0;
@@ -92,35 +92,51 @@ void setup() {
 }
 
 void loop() {
+//  sample();
+
   eventChecker();
   switch (currentState)
   {
     case WAIT:
+      analogWrite(pwmPin0, 0);
+      analogWrite(pwmPin1, 0);
       if (val == 's') { //sample
-        if (Serial.available() > 0) {
-          buttonID = Serial.parseInt();
-        }
+        buttonID = Serial.parseInt();
+//        blinkNTimes(2, 200);
+        myPID.SetTunings(myKp1, myKi1, myKd1);
         currentState = SAMPLE;
       } else if (val == 'p') {
-        if (Serial.available() > 0) {
-          buttonID = Serial.parseInt();
-        }
+        buttonID = Serial.parseInt();
+//        blinkNTimes(3, 200);
         currentState = PLAYBACK;
       }
       break;
     case SAMPLE:
       sample();
+      /*
       if (isSaturated) {
         Serial.println('d');
+        blinkNTimes(1, 200);
         currentState = WAIT;
       } 
-      if (val == 'd') currentState = WAIT;
-      else if (val == 'R') Serial.println(positionVal);
+      if (val == 'd') {
+        blinkNTimes(1, 200);
+        currentState = WAIT;
+      }
+      else if (val == 'R') {
+//        Serial.println(positionVal);
+      }
+      */
       break;
     case PLAYBACK:
       playback();
-      if (val == 'd') currentState = WAIT;
-      else if (val == 'R') Serial.println(positionVal);
+      if (val == 'd') {
+        blinkNTimes(1, 200);
+        currentState = WAIT;
+      }
+      else if (val == 'R') {
+//        Serial.println(positionVal);
+      }
       break;
   }
 }
@@ -129,24 +145,22 @@ void loop() {
 void eventChecker() {
   if (Serial.available()) {
     val = Serial.read();
+  } else {
+    val = '0';
   }
-}
+} 
 
 //playback functions
 void playback() {
   myPID.SetTunings(myKp2, myKi2, myKd2);
 
-//  toggleState();
-
   updateEncoderAB();
   positionVal = filterEncoderAB();
   thisForce = updateRawForce();
   Input = filterForce();
-
   updateVelocity();
 
   Setpoint = calculateSetpoint();
-
 
   if (myPID.Compute()) {
     Output -= dxh_filt * Kd_vel;
@@ -158,7 +172,6 @@ void playback() {
     analogWrite(pwmPin1, pwmVal1);
   }
 
-//  printValsPlayback();
 }
 
 float filterForce() {
@@ -188,29 +201,11 @@ void updateVelocity() {
 
     lastVelUpdate = currVelUpdate;
   }
-
 }
-
-void printValsPlayback() {
-  currPrintTime = millis();
-  if (currPrintTime - lastPrintTime > printTimeInterval) {
-    Serial.print(Setpoint);
-    //      Serial.print(", ");
-    //      Serial.print(dxh_filt*100.0);
-    //      Serial.print(", ");
-    //      Serial.print(dataCount);
-    Serial.print(", ");
-    Serial.print(Input);
-    Serial.println();
-    lastPrintTime = currPrintTime;
-  }
-}
-
 
 //sample functions
 void sample() {
-  myPID.SetTunings(myKp1, myKp1, myKp1);
-
+  blinkSample();
   if (!isSaturated) {
     updateEncoderAB();
     positionVal = filterEncoderAB();
@@ -219,7 +214,7 @@ void sample() {
 
     if (myPID.Compute()) {
       offsetOutput(800.0, 4096.0);
-      myPID.SetTunings(Kp, Ki, Kd);
+//      myPID.SetTunings(myKp1, myKp1, myKp1);
       pwmVal0 = (abs(Output) - Output) / 2;
       pwmVal1 = (abs(Output) + Output) / 2;
       analogWrite(pwmPin0, pwmVal0);
@@ -250,6 +245,7 @@ void sample() {
   }
   // When data arrays are full, print them
   if (dataCount == dataSize) {
+    isSaturated = true;
 //    Serial.print("pos = ");
 //    printBuf(posData, dataSize);
 //    Serial.print("force = ");
@@ -258,23 +254,21 @@ void sample() {
     analogWrite(pwmPin1, 0);
   }
 
-//  printValsSample();
 }
 
-void printValsSample() {
-  currPrintTime = millis();
-  if (currPrintTime - lastPrintTime > printTimeInterval) {
-    Serial.print(Setpoint);
-    Serial.print(", ");
-    Serial.print(Input);
-    Serial.print(", ");
-    //      Serial.print(dataCount);
-    //      Serial.print(", ");
-    Serial.print(forceBuffer[bufCount]);
-    Serial.println();
-    lastPrintTime = currPrintTime;
+unsigned int lastBlinkTime = 0;
+unsigned int currBlinkTime = 0;
+unsigned int blinkInterval = 500;
+bool blinkState = LOW;
+void blinkSample() {
+  currBlinkTime = millis();
+  if (currBlinkTime - lastBlinkTime > blinkInterval) {
+    digitalWrite(LED_BUILTIN, blinkState);
+    lastBlinkTime = currBlinkTime;
+    blinkState = !blinkState;
   }
 }
+
 
 
 void blinkNTimes(int n, int dt) {
