@@ -19,6 +19,7 @@ float myKp1 = 75;
 float myKi1 = 0.75;
 float myKd1 = 250; //  * Kp;
 bool isSaturated = false;
+bool finishSampling = false;
 float lastPos = 0;
 float lastForce = 0;
 float maxForce = 600;
@@ -53,10 +54,25 @@ float ffWindow[ffWindowSize];
 int ffIndex = 0;
 float positionVal = 0;
 
+/* SD setup */
+#include <SD.h>
+#include <SPI.h>
+File myPosFile;
+File myForceFile;
+const int chipSelect = BUILTIN_SDCARD;
+
+/* post processing setup*/
+float outputPos[dataSize]; 
+float outputForce[dataSize];
+
+float lastPosData = -1;
+float currPosData = -1;
+float localForceSum = 0;
+float localCount = 0;
+float maxAngle = 500;
 
 void setup() {
   Serial.begin(115200);
-
 
   /* PID setup */
   Input = 0;
@@ -89,6 +105,8 @@ void setup() {
   }
   pinMode(LED_BUILTIN, OUTPUT);
   blinkNTimes(5, 200);
+
+  SD.begin(chipSelect);
 }
 
 void loop() {
@@ -102,8 +120,10 @@ void loop() {
       analogWrite(pwmPin1, 0);
       if (val == 's') { //sample
         buttonID = Serial.parseInt();
-//        blinkNTimes(2, 200);
         myPID.SetTunings(myKp1, myKi1, myKd1);
+        isSaturated = false;
+        finishSampling = false;
+        Setpoint = 0;
         currentState = SAMPLE;
       } else if (val == 'p') {
         buttonID = Serial.parseInt();
@@ -113,20 +133,14 @@ void loop() {
       break;
     case SAMPLE:
       sample();
-      /*
-      if (isSaturated) {
-        Serial.println('d');
-        blinkNTimes(1, 200);
+      if (val == 'd' || finishSampling) {
+        if (finishSampling) Serial.println('d');
+        digitalWrite(LED_BUILTIN, LOW);
+        postProcess();
         currentState = WAIT;
       } 
-      if (val == 'd') {
-        blinkNTimes(1, 200);
-        currentState = WAIT;
-      }
-      else if (val == 'R') {
-//        Serial.println(positionVal);
-      }
-      */
+      else if (val == 'R') Serial.println(positionVal);
+
       break;
     case PLAYBACK:
       playback();
@@ -134,9 +148,7 @@ void loop() {
         blinkNTimes(1, 200);
         currentState = WAIT;
       }
-      else if (val == 'R') {
-//        Serial.println(positionVal);
-      }
+      else if (val == 'R') Serial.println(positionVal);
       break;
   }
 }
@@ -153,7 +165,7 @@ void eventChecker() {
 //playback functions
 void playback() {
   myPID.SetTunings(myKp2, myKi2, myKd2);
-
+  
   updateEncoderAB();
   positionVal = filterEncoderAB();
   thisForce = updateRawForce();
@@ -171,7 +183,6 @@ void playback() {
     analogWrite(pwmPin0, pwmVal0);
     analogWrite(pwmPin1, pwmVal1);
   }
-
 }
 
 float filterForce() {
@@ -245,16 +256,64 @@ void sample() {
   }
   // When data arrays are full, print them
   if (dataCount == dataSize) {
-    isSaturated = true;
-//    Serial.print("pos = ");
-//    printBuf(posData, dataSize);
-//    Serial.print("force = ");
-//    printBuf(forceData, dataSize);
+    finishSampling = true;
     analogWrite(pwmPin0, 0);
     analogWrite(pwmPin1, 0);
   }
-
 }
+
+const char *posFileNames[] = {"pos1.txt", "pos2.txt", "pos3.txt", "pos4.txt", "pos5.txt"};
+const char *forceFileNames[] = {"force1.txt", "force2.txt", "force3.txt", "force4.txt", "force5.txt"};
+
+void saveDataToSD() {
+
+  myPosFile = SD.open(posFileNames[buttonID - 1], FILE_WRITE);
+  if (myPosFile) {
+    for (int i = 0; i < dataSize; i++) {
+      myPosFile.println(outputPos[i]);
+    }
+    myPosFile.close();
+  }
+
+  myForceFile = SD.open(forceFileNames[buttonID - 1], FILE_WRITE);
+  if (myForceFile) {
+    for (int i = 0; i < dataSize; i++) {
+      myForceFile.println(outputForce[i]);
+    }
+    myForceFile.close();
+  }
+}
+
+void postProcess() {
+  int j = 0;
+  for (int i = 0; i < dataSize; i++) {
+    float currPosData = posData[i];
+    if (currPosData != lastPosData && i != 0) {
+      outputPos[j] = lastPosData;
+      outputForce[j] = localForceSum / localCount;
+      localForceSum = 0;
+      localCount = 0;
+      j++;
+    }
+    localForceSum += forceData[i];
+    localCount += 1;
+    lastPosData = currPosData;
+  }
+  j++;
+  outputPos[j] = lastPosData;
+  outputForce[j] = localForceSum / localCount;
+
+  float m = 500;
+  float posDiff = outputPos[j] - outputPos[j-1];
+  float lastForceData = m * posDiff + outputForce[j];
+  for (int k = j + 1; k < dataSize; k++) {
+    outputPos[k] = outputPos[k-1] + posDiff; 
+    outputForce[k] = lastForceData;
+  }
+  saveDataToSD();
+}
+
+
 
 unsigned int lastBlinkTime = 0;
 unsigned int currBlinkTime = 0;

@@ -115,10 +115,6 @@ void draw () {
     updateAnimation();
     break;
 
-    //case PLAYBACK_ANIMATION:
-    // show the animation
-    // if "close" pushed go back to the Waiting
-    //break;
   }
 }
 
@@ -139,10 +135,8 @@ void serialEvent (Serial myPort) {
       currentState = WAITING;
     }
     break;
-
   case PLAYBACKREADY:
     break;
-
   case PLAYBACK:
     receivePosition();
     break;
@@ -263,9 +257,15 @@ void requestPosition() {
 void receivePosition() {
  if (myPort.available() > 0) {
     String posString = myPort.readStringUntil('\n');
+    posString = trim(posString);
     if (posString != null) {
+      println(posString);
+      if (posString.equals("d")) {
+        println("in d");
+        currentState = WAITING;
+        return;
+      }
       pos = float(posString);
-      println(pos);
     } 
   } 
 }

@@ -121,10 +121,6 @@ void draw () {
     updateAnimation();
     break;
 
-    //case PLAYBACK_ANIMATION:
-    // show the animation
-    // if "close" pushed go back to the Waiting
-    //break;
   }
 }
 
@@ -704,19 +700,3 @@ void updateButtonLabels() {
     enterPressed = false;
   }
 }
-
-//void serialEvent (Serial myPort) {
-//  //read in master handle position
-//  String inString = myPort.readStringUntil('\n');
-
-//  if (inString != null) {
-//    inString = trim(inString); // trim off whitespaces.
-//    inByte = float(inString);    // convert to a number.
-//    if (Float.isNaN(inByte)){
-//       inByte=lastByte;   //handles the case where the vavlue being read is corrupted
-//    } else {
-//       inByte = map(inByte, leftLim, rightLim, 0, height); //map to the screen height.
-//       lastByte=inByte;
-//    }
-//  }
-//}
