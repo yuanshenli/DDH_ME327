@@ -23,7 +23,8 @@ bool finishSampling = false;
 float lastPos = 0;
 float lastForce = 0;
 float maxForce = 600;
-float forceIncFill = 20;
+float maxProfileForce = 10000;
+float forceIncFill = 200;
 float posIncFill = posRes;
 
 //playback global variables
@@ -70,6 +71,7 @@ float currPosData = -1;
 float localForceSum = 0;
 float localCount = 0;
 float maxAngle = 500;
+int cutoffIndex = 0;
 
 void setup() {
   Serial.begin(115200);
@@ -136,7 +138,7 @@ void loop() {
       if (val == 'd' || finishSampling) {
         if (finishSampling) Serial.println('d');
         digitalWrite(LED_BUILTIN, LOW);
-        postProcess();
+        postProcess(cutoffIndex);
         currentState = WAIT;
       } 
       else if (val == 'R') Serial.println(positionVal);
@@ -247,9 +249,11 @@ void sample() {
     forceData[dataCount] = averageBuf(forceBuffer, bufSize); //print to proc.
     if (forceData[dataCount] >= maxForce && lastForce >= maxForce) {
       isSaturated = true;
+      cutoffIndex = dataCount;
     }
     lastPos = posData[dataCount];
     lastForce = forceData[dataCount];
+    lastForce = min(lastForce, maxProfileForce);
     dataCount++;
     Setpoint += posRes;
     bufCount %= bufSize;
@@ -266,7 +270,7 @@ const char *posFileNames[] = {"pos1.txt", "pos2.txt", "pos3.txt", "pos4.txt", "p
 const char *forceFileNames[] = {"force1.txt", "force2.txt", "force3.txt", "force4.txt", "force5.txt"};
 
 void saveDataToSD() {
-
+  if (SD.exists(posFileNames[buttonID - 1])) SD.remove(posFileNames[buttonID - 1]);
   myPosFile = SD.open(posFileNames[buttonID - 1], FILE_WRITE);
   if (myPosFile) {
     for (int i = 0; i < dataSize; i++) {
@@ -275,6 +279,7 @@ void saveDataToSD() {
     myPosFile.close();
   }
 
+  if (SD.exists(forceFileNames[buttonID - 1])) SD.remove(forceFileNames[buttonID - 1]);
   myForceFile = SD.open(forceFileNames[buttonID - 1], FILE_WRITE);
   if (myForceFile) {
     for (int i = 0; i < dataSize; i++) {
@@ -284,9 +289,9 @@ void saveDataToSD() {
   }
 }
 
-void postProcess() {
+void postProcess(int cutoffIndex) {
   int j = 0;
-  for (int i = 0; i < dataSize; i++) {
+  for (int i = 0; i <= cutoffIndex; i++) {
     float currPosData = posData[i];
     if (currPosData != lastPosData && i != 0) {
       outputPos[j] = lastPosData;
@@ -299,7 +304,6 @@ void postProcess() {
     localCount += 1;
     lastPosData = currPosData;
   }
-  j++;
   outputPos[j] = lastPosData;
   outputForce[j] = localForceSum / localCount;
 
