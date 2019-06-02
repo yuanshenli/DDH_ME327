@@ -1,10 +1,7 @@
 #include <DDHapticHelper.h>
-
-
-//sample code
-
 typedef enum {
   WAIT,
+  RESET_SAMPLE,
   SAMPLE,
   PLAYBACK,
 } States;
@@ -26,6 +23,7 @@ float maxForce = 600;
 float maxProfileForce = 10000;
 float forceIncFill = 200;
 float posIncFill = posRes;
+//int thisForce = 0;
 
 //playback global variables
 float myKp2 = 3 ;
@@ -62,8 +60,13 @@ File myPosFile;
 File myForceFile;
 const int chipSelect = BUILTIN_SDCARD;
 
+#define BUFFER_SIZE 20
+char thisLine[BUFFER_SIZE];
+int idx = 0;
+
+
 /* post processing setup*/
-float outputPos[dataSize]; 
+float outputPos[dataSize];
 float outputForce[dataSize];
 
 float lastPosData = -1;
@@ -72,6 +75,10 @@ float localForceSum = 0;
 float localCount = 0;
 float maxAngle = 500;
 int cutoffIndex = 0;
+
+/* profile */
+float cdsPos[dataSize];
+float cdsForce[dataSize];
 
 void setup() {
   Serial.begin(115200);
@@ -112,9 +119,10 @@ void setup() {
 }
 
 void loop() {
-//  sample();
-
+  
   eventChecker();
+  updateEncoderAB();
+  positionVal = filterEncoderAB();
   switch (currentState)
   {
     case WAIT:
@@ -122,37 +130,39 @@ void loop() {
       analogWrite(pwmPin1, 0);
       if (val == 's') { //sample
         buttonID = Serial.parseInt();
-        myPID.SetTunings(myKp1, myKi1, myKd1);
-        isSaturated = false;
-        finishSampling = false;
-        Setpoint = 0;
-        currentState = SAMPLE;
+        currentState = RESET_SAMPLE;
       } else if (val == 'p') {
         buttonID = Serial.parseInt();
-//        blinkNTimes(3, 200);
+        clearBuf(cdsPos, dataSize);
+        clearBuf(cdsForce, dataSize);
+        readDataFromSD();
+        myPID.SetTunings(myKp2, myKi2, myKd2);
         currentState = PLAYBACK;
       }
+      break;
+    case RESET_SAMPLE:
+      resetSampling();
+      resetPos();
       break;
     case SAMPLE:
       sample();
       if (val == 'd' || finishSampling) {
-        if (finishSampling) Serial.println('d');
-        digitalWrite(LED_BUILTIN, LOW);
         postProcess(cutoffIndex);
+        saveDataToSD();
+        if (finishSampling) Serial.println('d');
         currentState = WAIT;
-      } 
-      else if (val == 'R') Serial.println(positionVal);
+      }
+      else if (val == 'R') Serial.println(dataCount);
 
       break;
     case PLAYBACK:
       playback();
-      if (val == 'd') {
-        blinkNTimes(1, 200);
-        currentState = WAIT;
-      }
-      else if (val == 'R') Serial.println(positionVal);
+      if (val == 'd') currentState = WAIT;
+      else if (val == 'R') Serial.println(Output);
       break;
   }
+  
+  
 }
 
 
@@ -162,19 +172,18 @@ void eventChecker() {
   } else {
     val = '0';
   }
-} 
+}
 
 //playback functions
 void playback() {
-  myPID.SetTunings(myKp2, myKi2, myKd2);
+  blinkSample(500);
   
   updateEncoderAB();
   positionVal = filterEncoderAB();
   thisForce = updateRawForce();
   Input = filterForce();
   updateVelocity();
-
-  Setpoint = calculateSetpoint();
+  Setpoint = cdsCalculateSetpoint();
 
   if (myPID.Compute()) {
     Output -= dxh_filt * Kd_vel;
@@ -194,6 +203,8 @@ float filterForce() {
   ffIndex %= ffWindowSize;
   return ffFilt;
 }
+
+
 
 void updateVelocity() {
   currVelUpdate = millis();
@@ -218,21 +229,9 @@ void updateVelocity() {
 
 //sample functions
 void sample() {
-  blinkSample();
+  blinkSample(200);
   if (!isSaturated) {
-    updateEncoderAB();
-    positionVal = filterEncoderAB();
-    Input = Input_pos;
-    int thisForce = updateRawForce();
-
-    if (myPID.Compute()) {
-      offsetOutput(800.0, 4096.0);
-//      myPID.SetTunings(myKp1, myKp1, myKp1);
-      pwmVal0 = (abs(Output) - Output) / 2;
-      pwmVal1 = (abs(Output) + Output) / 2;
-      analogWrite(pwmPin0, pwmVal0);
-      analogWrite(pwmPin1, pwmVal1);
-    }
+    readSensorsUpdatePID();
     // Take sample and take into the buffers
     posBuffer[bufCount] = Input;
     forceBuffer[bufCount] = thisForce;
@@ -261,32 +260,32 @@ void sample() {
   // When data arrays are full, print them
   if (dataCount == dataSize) {
     finishSampling = true;
+    cutoffIndex = dataCount;
     analogWrite(pwmPin0, 0);
     analogWrite(pwmPin1, 0);
   }
 }
 
-const char *posFileNames[] = {"pos1.txt", "pos2.txt", "pos3.txt", "pos4.txt", "pos5.txt"};
-const char *forceFileNames[] = {"force1.txt", "force2.txt", "force3.txt", "force4.txt", "force5.txt"};
+void resetSampling() {
+  myPID.SetTunings(myKp1, myKi1, myKd1);
+  isSaturated = false;
+  finishSampling = false;
+  Setpoint = 0;
+  cutoffIndex = 0;
+  dataCount = 0;
+  bufCount = 0;
+  lastPos = 0;
+  lastForce = 0;
 
-void saveDataToSD() {
-  if (SD.exists(posFileNames[buttonID - 1])) SD.remove(posFileNames[buttonID - 1]);
-  myPosFile = SD.open(posFileNames[buttonID - 1], FILE_WRITE);
-  if (myPosFile) {
-    for (int i = 0; i < dataSize; i++) {
-      myPosFile.println(outputPos[i]);
-    }
-    myPosFile.close();
-  }
+  lastPosData = -1;
+  currPosData = -1;
+  localForceSum = 0;
+  localCount = 0;
 
-  if (SD.exists(forceFileNames[buttonID - 1])) SD.remove(forceFileNames[buttonID - 1]);
-  myForceFile = SD.open(forceFileNames[buttonID - 1], FILE_WRITE);
-  if (myForceFile) {
-    for (int i = 0; i < dataSize; i++) {
-      myForceFile.println(outputForce[i]);
-    }
-    myForceFile.close();
-  }
+  clearBuf(posBuffer, bufSize);
+  clearBuf(forceBuffer, bufSize);
+  clearBuf(posData, dataCount);
+  clearBuf(forceData, dataCount);
 }
 
 void postProcess(int cutoffIndex) {
@@ -308,22 +307,138 @@ void postProcess(int cutoffIndex) {
   outputForce[j] = localForceSum / localCount;
 
   float m = 500;
-  float posDiff = outputPos[j] - outputPos[j-1];
+  float posDiff = outputPos[j] - outputPos[j - 1];
   float lastForceData = m * posDiff + outputForce[j];
   for (int k = j + 1; k < dataSize; k++) {
-    outputPos[k] = outputPos[k-1] + posDiff; 
+    outputPos[k] = outputPos[k - 1] + posDiff;
     outputForce[k] = lastForceData;
   }
-  saveDataToSD();
 }
 
+const char *posFileNames[] = {"pos1.txt", "pos2.txt", "pos3.txt", "pos4.txt", "pos5.txt"};
+const char *forceFileNames[] = {"force1.txt", "force2.txt", "force3.txt", "force4.txt", "force5.txt"};
+
+void saveDataToSD() {
+  digitalWrite(LED_BUILTIN, HIGH);
+  if (SD.exists(posFileNames[buttonID - 1])) SD.remove(posFileNames[buttonID - 1]);
+  myPosFile = SD.open(posFileNames[buttonID - 1], FILE_WRITE);
+  if (myPosFile) {
+    for (int i = 0; i < dataSize; i++) {
+      myPosFile.println(outputPos[i]);
+    }
+    myPosFile.close();
+  }
+
+  if (SD.exists(forceFileNames[buttonID - 1])) SD.remove(forceFileNames[buttonID - 1]);
+  myForceFile = SD.open(forceFileNames[buttonID - 1], FILE_WRITE);
+  if (myForceFile) {
+    for (int i = 0; i < dataSize; i++) {
+      myForceFile.println(outputForce[i]);
+    }
+    myForceFile.close();
+  }
+  digitalWrite(LED_BUILTIN, LOW);
+}
+
+void readDataFromSD() {
+  if (!SD.exists(posFileNames[buttonID - 1])) {
+    blinkNTimes(5, 500); 
+    return;
+  } 
+  myPosFile = SD.open(posFileNames[buttonID - 1]);
+  if (myPosFile) {
+    int ii = 0;
+    while (myPosFile.available()) {
+      cdsPos[ii] = readLineToFloat(myPosFile);
+      ii++;
+    }
+    myPosFile.close();
+  }
+  if (!SD.exists(forceFileNames[buttonID - 1])) {
+    blinkNTimes(5, 500); 
+    return;
+  } 
+  myForceFile = SD.open(forceFileNames[buttonID - 1]);
+  if (myForceFile) {
+    int ii = 0;
+    while (myForceFile.available()) {
+      cdsForce[ii] = readLineToFloat(myForceFile);
+      ii++;
+    }
+    myForceFile.close();
+  }
+}
+
+float readLineToFloat(File &myFile) {
+  bool EOL = false;
+  while (!EOL) {
+    char c = myFile.read();  // reads 1 char from SD
+    if (c == '\n' || idx==19) { // prevent buffer overflow too..
+      thisLine[idx] = 0;
+      idx = 0;
+      EOL = true;
+    }
+    else {
+      thisLine[idx] = c;
+      idx++;
+    }
+  }
+  float thisVal = atof(thisLine);
+  for (int idx_c = 0; idx_c < BUFFER_SIZE; idx_c++) {
+    thisLine[idx_c] = 0;
+  }
+  return thisVal;
+}
+
+
+void resetPos() {
+  readSensorsUpdatePID();
+  // if pos error is small enough, transition to UPDATE_HAPTICS
+  if (abs(Input_pos - Setpoint) < 3) {
+    currentState = SAMPLE;
+  }
+}
+
+void readSensorsUpdatePID() {
+  updateEncoderAB();
+  positionVal = filterEncoderAB();
+  Input = Input_pos;
+  thisForce = updateRawForce();
+
+  if (myPID.Compute()) {
+    offsetOutput(800.0, 4096.0);
+    pwmVal0 = (abs(Output) - Output) / 2;
+    pwmVal1 = (abs(Output) + Output) / 2;
+    analogWrite(pwmPin0, pwmVal0);
+    analogWrite(pwmPin1, pwmVal1);
+  }
+}
+
+float cdsCalculateSetpoint() {
+  float interp_out = 0;
+  if (Input_pos <= cdsPos[0]) {
+    interp_out = cdsForce[0];
+    return interp_out;
+  } else if (Input_pos >= cdsPos[dataSize-1]) {
+    interp_out = cdsForce[dataSize-1];
+    return interp_out;
+  } else {
+    for (int i = 0; i < dataSize; i++) {
+      if (Input_pos > cdsPos[i]) continue;
+      else {
+        interp_out = cdsForce[i-1] + (Input_pos - cdsPos[i-1]) / (cdsPos[i] - cdsPos[i-1]) * (cdsForce[i] - cdsForce[i-1]);
+        return interp_out;
+      }
+    }
+  }
+  return -1; 
+}
 
 
 unsigned int lastBlinkTime = 0;
 unsigned int currBlinkTime = 0;
-unsigned int blinkInterval = 500;
 bool blinkState = LOW;
-void blinkSample() {
+void blinkSample(int blinkInterval) {
   currBlinkTime = millis();
   if (currBlinkTime - lastBlinkTime > blinkInterval) {
     digitalWrite(LED_BUILTIN, blinkState);
@@ -331,6 +446,7 @@ void blinkSample() {
     blinkState = !blinkState;
   }
 }
+
 
 
 
