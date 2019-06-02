@@ -3,6 +3,7 @@ typedef enum {
   WAIT,
   RESET_SAMPLE,
   SAMPLE,
+  EXIT_SAMPLE,
   PLAYBACK,
 } States;
 
@@ -19,10 +20,10 @@ bool isSaturated = false;
 bool finishSampling = false;
 float lastPos = 0;
 float lastForce = 0;
-float maxForce = 600;
-float maxProfileForce = 10000;
-float forceIncFill = 200;
-float posIncFill = posRes;
+float maxForce = 600; 
+float maxProfileForce = 10000; 
+float forceIncFill = 200; 
+float posIncFill = posRes; 
 //int thisForce = 0;
 
 //playback global variables
@@ -116,6 +117,8 @@ void setup() {
   blinkNTimes(5, 200);
 
   SD.begin(chipSelect);
+
+  Serial1.begin(38400);
 }
 
 void loop() {
@@ -130,6 +133,7 @@ void loop() {
       analogWrite(pwmPin1, 0);
       if (val == 's') { //sample
         buttonID = Serial.parseInt();
+        Serial1.println("to RESET_SAMPLE");
         currentState = RESET_SAMPLE;
       } else if (val == 'p') {
         buttonID = Serial.parseInt();
@@ -137,32 +141,81 @@ void loop() {
         clearBuf(cdsForce, dataSize);
         readDataFromSD();
         myPID.SetTunings(myKp2, myKi2, myKd2);
+        myPID.ResetParam();
+        Serial1.println("to PLAYBCAK");
         currentState = PLAYBACK;
       }
       break;
+
     case RESET_SAMPLE:
       resetSampling();
-      resetPos();
+      resetPos(SAMPLE);
       break;
+      
     case SAMPLE:
       sample();
       if (val == 'd' || finishSampling) {
         postProcess(cutoffIndex);
         saveDataToSD();
         if (finishSampling) Serial.println('d');
-        currentState = WAIT;
+        
+        Serial1.println("to EXIT_SAMPLE");
+        currentState = EXIT_SAMPLE;
       }
-      else if (val == 'R') Serial.println(dataCount);
-
+      else if (val == 'R') {
+//        Serial.println(positionVal);
+//        Serial1.print(positionVal);
+//        Serial1.print(", ");
+//        Serial1.print(Input);
+//        Serial1.print(", ");
+//        Serial1.print(Setpoint);
+//        Serial1.print(", ");
+//        Serial1.print(Output);
+//        Serial1.print(", ");
+//        Serial1.print(thisForce);
+//        Serial1.println();
+      }
       break;
+    case EXIT_SAMPLE:
+      Setpoint = 0;
+      resetPos(WAIT);
+      break;
+      
     case PLAYBACK:
       playback();
-      if (val == 'd') currentState = WAIT;
-      else if (val == 'R') Serial.println(Output);
+      if (val == 'd') {
+        Serial1.println("to WAIT");
+        currentState = WAIT;
+      }
+      else if (val == 'R') {
+        Serial.println(positionVal);
+        
+        Serial1.print(Setpoint);
+        Serial1.print(", ");
+        Serial1.print(Input);
+        Serial1.print(", ");
+        Serial1.print(Output);
+        Serial1.println(", ");
+       
+//        Serial1.print(positionVal);
+//        Serial1.print(", ");
+//        Serial1.print(Input_pos);
+//        Serial1.print(", ");
+//        Serial1.print(Input);
+//        Serial1.print(", ");
+//        Serial1.print(Setpoint);
+//        Serial1.print(", ");
+//        Serial1.print(Output);
+//        Serial1.print(", ");
+//        Serial1.print(myPID.GetKp());
+//        Serial1.print(", ");
+//        Serial1.print(myPID.GetKi());
+//        Serial1.print(", ");
+//        Serial1.print(myPID.GetKd());
+//        Serial1.println();
+      }
       break;
   }
-  
-  
 }
 
 
@@ -186,7 +239,7 @@ void playback() {
   Setpoint = cdsCalculateSetpoint();
 
   if (myPID.Compute()) {
-    Output -= dxh_filt * Kd_vel;
+//    Output -= dxh_filt * Kd_vel;
     offsetOutput(800.0, 4096.0);
 
     pwmVal0 = (abs(Output) + Output) / 2;
@@ -290,7 +343,7 @@ void resetSampling() {
 
 void postProcess(int cutoffIndex) {
   int j = 0;
-  for (int i = 0; i <= cutoffIndex; i++) {
+  for (int i = 0; i < cutoffIndex; i++) {
     float currPosData = posData[i];
     if (currPosData != lastPosData && i != 0) {
       outputPos[j] = lastPosData;
@@ -391,11 +444,12 @@ float readLineToFloat(File &myFile) {
 }
 
 
-void resetPos() {
+void resetPos(States nextState) {
   readSensorsUpdatePID();
   // if pos error is small enough, transition to UPDATE_HAPTICS
   if (abs(Input_pos - Setpoint) < 3) {
-    currentState = SAMPLE;
+    Serial1.print("finish reset");
+    currentState = nextState;
   }
 }
 

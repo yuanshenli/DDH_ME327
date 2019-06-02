@@ -71,7 +71,7 @@ void setup () {
   size(1200, 700);    
 
   printArray(Serial.list());
-  myPort = new Serial(this, Serial.list()[11], 115200);  //change 11 to number of ports I have
+  myPort = new Serial(this, Serial.list()[13], 115200);  //change 11 to number of ports I have
   myPort.bufferUntil('\n');
 
 
