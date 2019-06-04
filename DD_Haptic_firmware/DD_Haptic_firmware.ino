@@ -1,3 +1,4 @@
+#define DEBUG_SERIAL
 #include <DDHapticHelper.h>
 typedef enum {
   WAIT,
@@ -22,12 +23,12 @@ float lastPos = 0;
 float lastForce = 0;
 float maxForce = 600; 
 float maxProfileForce = 10000; 
-float forceIncFill = 200; 
+float forceIncFill = 50; 
 float posIncFill = posRes; 
 //int thisForce = 0;
 
 //playback global variables
-float myKp2 = 3 ;
+float myKp2 = 6 ;
 float myKi2 = 0.0; //0.12;
 float myKd2 = 0.0; //0.01 * Kp;
 
@@ -133,7 +134,9 @@ void loop() {
       analogWrite(pwmPin1, 0);
       if (val == 's') { //sample
         buttonID = Serial.parseInt();
+        #ifdef DEBUG_SERIAL
         Serial1.println("to RESET_SAMPLE");
+        #endif
         currentState = RESET_SAMPLE;
       } else if (val == 'p') {
         buttonID = Serial.parseInt();
@@ -142,7 +145,9 @@ void loop() {
         readDataFromSD();
         myPID.SetTunings(myKp2, myKi2, myKd2);
         myPID.ResetParam();
+        #ifdef DEBUG_SERIAL
         Serial1.println("to PLAYBCAK");
+        #endif
         currentState = PLAYBACK;
       }
       break;
@@ -157,23 +162,20 @@ void loop() {
       if (val == 'd' || finishSampling) {
         postProcess(cutoffIndex);
         saveDataToSD();
-        if (finishSampling) Serial.println('d');
+        if (finishSampling) {
+          Serial.println('d');
+          #ifdef DEBUG_SERIAL
+          Serial1.println("send 'd'");
+          #endif
+        }
         
+        #ifdef DEBUG_SERIAL
         Serial1.println("to EXIT_SAMPLE");
+        #endif
         currentState = EXIT_SAMPLE;
       }
       else if (val == 'R') {
-//        Serial.println(positionVal);
-//        Serial1.print(positionVal);
-//        Serial1.print(", ");
-//        Serial1.print(Input);
-//        Serial1.print(", ");
-//        Serial1.print(Setpoint);
-//        Serial1.print(", ");
-//        Serial1.print(Output);
-//        Serial1.print(", ");
-//        Serial1.print(thisForce);
-//        Serial1.println();
+        Serial.println(positionVal);
       }
       break;
     case EXIT_SAMPLE:
@@ -184,35 +186,13 @@ void loop() {
     case PLAYBACK:
       playback();
       if (val == 'd') {
+        #ifdef DEBUG_SERIAL
         Serial1.println("to WAIT");
+        #endif
         currentState = WAIT;
       }
       else if (val == 'R') {
-        Serial.println(positionVal);
-        
-        Serial1.print(Setpoint);
-        Serial1.print(", ");
-        Serial1.print(Input);
-        Serial1.print(", ");
-        Serial1.print(Output);
-        Serial1.println(", ");
-       
-//        Serial1.print(positionVal);
-//        Serial1.print(", ");
-//        Serial1.print(Input_pos);
-//        Serial1.print(", ");
-//        Serial1.print(Input);
-//        Serial1.print(", ");
-//        Serial1.print(Setpoint);
-//        Serial1.print(", ");
-//        Serial1.print(Output);
-//        Serial1.print(", ");
-//        Serial1.print(myPID.GetKp());
-//        Serial1.print(", ");
-//        Serial1.print(myPID.GetKi());
-//        Serial1.print(", ");
-//        Serial1.print(myPID.GetKd());
-//        Serial1.println();
+        Serial.println(thisForce);
       }
       break;
   }
@@ -257,8 +237,6 @@ float filterForce() {
   return ffFilt;
 }
 
-
-
 void updateVelocity() {
   currVelUpdate = millis();
   if (currVelUpdate - lastVelUpdate > velTime) {
@@ -300,8 +278,14 @@ void sample() {
     posData[dataCount] = averageBuf(posBuffer, bufSize); //print to processing
     forceData[dataCount] = averageBuf(forceBuffer, bufSize); //print to proc.
     if (forceData[dataCount] >= maxForce && lastForce >= maxForce) {
+      if (!isSaturated) cutoffIndex = dataCount;
       isSaturated = true;
-      cutoffIndex = dataCount;
+      
+      
+      #ifdef DEBUG_SERIAL
+      Serial1.print("isSaturated = true, ");
+      Serial1.println(cutoffIndex);
+      #endif
     }
     lastPos = posData[dataCount];
     lastForce = forceData[dataCount];
@@ -313,6 +297,9 @@ void sample() {
   // When data arrays are full, print them
   if (dataCount == dataSize) {
     finishSampling = true;
+    #ifdef DEBUG_SERIAL
+    Serial1.println("finishSamling = true");
+    #endif
     cutoffIndex = dataCount;
     analogWrite(pwmPin0, 0);
     analogWrite(pwmPin1, 0);
@@ -378,6 +365,7 @@ void saveDataToSD() {
   if (myPosFile) {
     for (int i = 0; i < dataSize; i++) {
       myPosFile.println(outputPos[i]);
+//      Serial1.println(outputPos[i]);
     }
     myPosFile.close();
   }
@@ -387,6 +375,7 @@ void saveDataToSD() {
   if (myForceFile) {
     for (int i = 0; i < dataSize; i++) {
       myForceFile.println(outputForce[i]);
+//      Serial1.println(outputForce[i]);
     }
     myForceFile.close();
   }
@@ -448,7 +437,9 @@ void resetPos(States nextState) {
   readSensorsUpdatePID();
   // if pos error is small enough, transition to UPDATE_HAPTICS
   if (abs(Input_pos - Setpoint) < 3) {
+    #ifdef DEBUG_SERIAL
     Serial1.print("finish reset");
+    #endif
     currentState = nextState;
   }
 }

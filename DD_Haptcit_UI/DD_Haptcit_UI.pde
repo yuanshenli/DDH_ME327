@@ -16,7 +16,7 @@ static final int PLAYBACKREADY = 4;
 // communication variables
 int lastRequestTime = 0;
 int currRequestTime = 0;
-int requestInterval = 50;
+int requestInterval = 200;
 int currentState = WAITING; //static final 
 String ID;
 // UI initialization
@@ -71,7 +71,7 @@ void setup () {
   size(1200, 700);    
 
   printArray(Serial.list());
-  myPort = new Serial(this, Serial.list()[11], 115200);  //change 11 to number of ports I have
+  myPort = new Serial(this, Serial.list()[13], 115200);  //change 11 to number of ports I have
   myPort.bufferUntil('\n');
 
 
@@ -97,18 +97,11 @@ void draw () {
 
   case SAMPLING:
     updateSampling();
+    requestPosition();
     updateAnimation();
     // have a prompt screen that says "sampling..."
     // prompt screen with "done sampling" message, says to name object
     // user presses "ok" and then goes back to waiting state
-    
-    String inString = "";
-    if (myPort.available() > 0) {
-      inString = myPort.readStringUntil('\n');
-    }
-    if (inString.equals("d")) {
-      currentState = WAITING;
-    }
 
     break;
 
@@ -118,9 +111,79 @@ void draw () {
 
   case PLAYBACK:
     updatePlayback();
+    requestPosition();
     updateAnimation();
     break;
 
+  }
+}
+
+void serialEvent (Serial myPort) {
+  switch(currentState) {
+  case WAITING:
+    break;
+  case SAMPLEREADY:
+    break;
+
+  case SAMPLING:
+    receivePosition();
+    String inString = "";
+    if (myPort.available() > 0) {
+      inString = myPort.readStringUntil('\n');
+    }
+    if (inString.equals("d")) {
+      currentState = WAITING;
+    }
+    break;
+  case PLAYBACKREADY:
+    break;
+  case PLAYBACK:
+    receivePosition();
+    break;
+  }
+}
+
+void controlEvent(ControlEvent theControlEvent) {
+  if (theControlEvent.isTab()) {
+    println("got an event from tab : "+theControlEvent.getTab().getName()+" with id "+theControlEvent.getTab().getId());
+  }
+  if (theControlEvent.isController()) {
+
+    String name = theControlEvent.getController().getName();
+
+    if (name == "Sample Prompt") {    // READY BUTTON
+      myPort.write("s");
+      myPort.write(ID); // send the value of the button
+      myPort.clear();
+      println("switch to SAMPLING");
+      currentState = SAMPLING;
+    } else if (name == "StopS") {
+      myPort.write("d");
+      myPort.clear();
+      println("switch to WAITING");
+      currentState = WAITING;
+    } else if (name == "Playback Prompt") {   // READY BUTTON  
+      myPort.write("p");   
+      myPort.write(ID); // send the value of the button
+      myPort.clear();
+      println("switch to PLAYBACK");
+      currentState = PLAYBACK;
+    } else if (name == "StopP") {
+      myPort.write("d");  
+      myPort.clear();
+      println("switch to WAITING");
+      currentState = WAITING;
+    } else if (name.indexOf("S") == 0) {
+      ID = name.substring(1);
+      println(ID);
+      println("switch to SAMPLEREADY" + ID);
+      currentState = SAMPLEREADY;
+    } else if (name.indexOf("P") == 0) {
+      println(name);
+      ID = name.substring(1);
+      println("switch to PLAYBACKREADY" + ID);
+      currentState = PLAYBACKREADY;
+    }
   }
 }
 
@@ -179,20 +242,32 @@ void dotdotdotText(String myTxt) {
 }
 
 void updateAnimation() {
-  // request position from Arduino
+
+}
+
+void requestPosition() {
   currRequestTime = millis();
   if (currRequestTime - lastRequestTime > requestInterval) {
     myPort.write("R");
     lastRequestTime = currRequestTime;
   }
   // Receive position from Arduino
-  if (myPort.available() > 0) {
-    String inString = myPort.readStringUntil('\n');
-    if (inString != null) {
-      pos = float(inString);
-      println(pos);
-    }  
-  }
+}
+
+void receivePosition() {
+ if (myPort.available() > 0) {
+    String posString = myPort.readStringUntil('\n');
+    posString = trim(posString);
+    if (posString != null) {
+      println(posString);
+      if (posString.equals("d")) {
+        println("in d");
+        currentState = WAITING;
+        return;
+      }
+      pos = float(posString);
+    } 
+  } 
 }
 
 void updateWaitingScreen() {
@@ -200,44 +275,7 @@ void updateWaitingScreen() {
   updateButtonLabels();
 }
 
-void controlEvent(ControlEvent theControlEvent) {
-  if (theControlEvent.isTab()) {
-    println("got an event from tab : "+theControlEvent.getTab().getName()+" with id "+theControlEvent.getTab().getId());
-  }
-  if (theControlEvent.isController()) {
 
-    String name = theControlEvent.getController().getName();
-
-    if (name == "Sample Prompt") {    // READY BUTTON
-      myPort.write("s");
-      myPort.write(ID); // send the value of the button
-      myPort.clear();
-      currentState = SAMPLING;
-    } else if (name == "StopS") {
-      myPort.write("d");
-      myPort.clear();
-      currentState = WAITING;
-    } else if (name == "Playback Prompt") {   // READY BUTTON  
-      myPort.write("p");   
-      myPort.write(ID); // send the value of the button
-      myPort.clear();
-      currentState = PLAYBACK;
-    } else if (name == "StopP") {
-      myPort.write("d");  
-      myPort.clear();
-      currentState = WAITING;
-    } else if (name.indexOf("S") == 0) {
-      ID = name.substring(1);
-      println(ID);
-      currentState = SAMPLEREADY;
-    } else if (name.indexOf("P") == 0) {
-      println(name);
-      ID = name.substring(1);
-      println(ID);
-      currentState = PLAYBACKREADY;
-    }
-  }
-}
 
 void EventChecker() {
   if (keyPressed) {
