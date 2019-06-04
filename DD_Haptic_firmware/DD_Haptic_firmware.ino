@@ -56,7 +56,7 @@ float positionVal = 0;
 
 /* SD setup */
 #include <SD.h>
-#include <SPI.h>
+//#include <SPI.h>
 File myPosFile;
 File myForceFile;
 const int chipSelect = BUILTIN_SDCARD;
